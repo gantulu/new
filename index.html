@@ -31,7 +31,7 @@ const LOGO="https://jhpbtooefyzdndstlzva.supabase.co/storage/v1/object/public/ap
 const SLOTS=["09:00","13:00","19:00"];
 const KEYS=["product","style","visual_style","headline","subheadline","feature_items","composition","background","typographhy","lighting"];
 const LABELS={product:"Product",style:"Style",visual_style:"Visual Style",headline:"Headline",subheadline:"Subheadline",feature_items:"Feature Items",composition:"Composition",background:"Background",typographhy:"Typography",lighting:"Lighting"};
-const state={tab:"templates",records:[],history:[],calendar:[],selected:null,vars:{},apiKey:"",anonKey:"",logo:null,logoUrl:LOGO,imageData:null,imageMime:"image/png",imageUrl:"",busy:false,error:"",toastTimer:null,historySelected:null,calendarSelected:null};
+const state={tab:"templates",records:[],history:[],calendar:[],selected:null,vars:{},anonKey:"",logo:null,logoUrl:LOGO,imageData:null,imageMime:"image/png",imageUrl:"",busy:false,error:"",toastTimer:null,historySelected:null,calendarSelected:null};
 const $=s=>document.querySelector(s);
 const main=$("#main");
 function esc(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
@@ -81,14 +81,15 @@ function renderResult(){const e=$("#error"),r=$("#result");if(!e||!r)return;e.in
 }
 async function fileBase64(file){return new Promise((resolve,reject)=>{const fr=new FileReader();fr.onload=()=>resolve(String(fr.result).split(",")[1]);fr.onerror=reject;fr.readAsDataURL(file);});}
 async function generateImage(){
- if(!state.selected)return;if(!state.apiKey){state.error="API key Gemini belum diatur. Buka Settings untuk memasukkannya.";renderEditor();return;}
+ if(!state.selected)return;// Gemini Canvas provides native runtime authentication; no user API key is required.
  state.busy=true;state.error="";const btn=$("#generate");if(btn){btn.disabled=true;btn.textContent="Generating…";}renderResult();
  try{
   const logo=state.logo||await (async()=>{const r=await fetch(LOGO);if(!r.ok)throw Error("Brand logo tidak dapat dimuat.");return new File([await r.blob()],"brand-logo.png",{type:"image/png"});})();
   const logoData=await fileBase64(logo);
   const prompt=masterPrompt(state.vars,"brand_logo_placement: Use the supplied original logo exactly as provided. Preserve its shape, proportions and colors. Position it at the top-left corner.");
   const payload={contents:[{role:"user",parts:[{text:prompt},{inlineData:{mimeType:logo.type||"image/png",data:logoData}}]}],generationConfig:{responseModalities:["IMAGE"],imageConfig:{aspectRatio:"4:5"}}};
-  const res=await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent?key="+encodeURIComponent(state.apiKey),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+  const apiKey=""; // Keep empty for Gemini Canvas native authentication.
+  const res=await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent?key="+apiKey,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
   const data=await res.json();if(!res.ok)throw Error(data?.error?.message||"Gemini image generation gagal (HTTP "+res.status+").");
   const part=data?.candidates?.[0]?.content?.parts?.find(x=>x.inlineData);if(!part?.inlineData?.data)throw Error("Gemini tidak mengembalikan gambar.");
   state.imageData=part.inlineData.data;state.imageMime=part.inlineData.mimeType||"image/png";renderResult();await uploadImage();
@@ -103,8 +104,9 @@ async function uploadImage(){
  toast("Gambar diunggah dan URL tersimpan.");renderResult();
 }
 function downloadImage(){if(!state.imageData)return;const a=document.createElement("a");a.href="data:"+state.imageMime+";base64,"+state.imageData;a.download="appletheexchangetrx-"+(state.selected?.id||"ad")+".png";a.click();}
-function renderSettings(){main.innerHTML='<section class="panel"><h2>Settings</h2><p class="muted">Kredensial digunakan di browser ini saja dan tidak disimpan ke server.</p><div class="field"><label>Gemini API Key</label><input id="gemini" type="password" autocomplete="off" placeholder="Masukkan Gemini API key"></div><div class="field"><label>Supabase Edge Function Anon Key (opsional jika endpoint publik)</label><input id="anon" type="password" autocomplete="off" placeholder="Supabase anon key"></div><button class="btn primary block" id="save-settings" style="margin-top:14px">Simpan untuk sesi ini</button><p class="status">Catatan keamanan: API key yang digunakan dari browser dapat terlihat oleh pengguna/perangkat yang menjalankan aplikasi. Untuk produksi, pindahkan pemanggilan Gemini ke server/Edge Function.</p></section><section class="panel"><h2>Brand identity</h2><p class="muted">@appletheexchangetrx · Instagram Feed · 4:5 · 1080 × 1350</p></section>';
- $("#gemini").value=state.apiKey;$("#anon").value=state.anonKey;$("#save-settings").onclick=()=>{state.apiKey=$("#gemini").value.trim();state.anonKey=$("#anon").value.trim();toast("Pengaturan aktif untuk sesi browser ini.");};
+function renderSettings(){
+main.innerHTML='<section class="panel"><h2>Settings</h2><p class="muted">Gemini authentication disediakan oleh Gemini Canvas Native Runtime. Tidak diperlukan API Key manual.</p><div class="field"><label>Supabase Edge Function Anon Key (opsional jika endpoint publik)</label><input id="anon" type="password" autocomplete="off" placeholder="Supabase anon key"></div><button class="btn primary block" id="save-settings" style="margin-top:14px">Simpan untuk sesi ini</button><p class="status">Gemini API Key sengaja dikosongkan agar Canvas runtime dapat menyuntikkan autentikasi native. Aplikasi ini ditujukan untuk Gemini Canvas.</p></section><section class="panel"><h2>Brand identity</h2><p class="muted">@appletheexchangetrx · Instagram Feed · 4:5 · 1080 × 1350</p></section>';
+$("#anon").value=state.anonKey;$("#save-settings").onclick=()=>{state.anonKey=$("#anon").value.trim();toast("Pengaturan disimpan untuk sesi ini.");};
 }
 function renderHistory(){main.innerHTML='<section class="panel"><div class="row"><div><h2>Jadwal</h2><p class="muted">'+state.history.length+' completed products</p></div><button class="btn small" id="reload">Refresh</button></div><div id="history-list"></div></section>';$("#reload").onclick=refreshTab;const box=$("#history-list");if(!state.history.length){box.innerHTML='<div class="empty">Belum ada completed products.</div>';return;}state.history.forEach(r=>{const b=document.createElement("button");b.className="record";b.innerHTML=(r.image_url?'<img src="'+esc(r.image_url)+'" alt="">':'<div style="width:54px"></div>')+'<div><strong>'+esc(field(r.product)||"Untitled Product")+'</strong><span>'+esc(field(r.caption)||"No caption")+'</span></div>';b.onclick=()=>openHistoryDetail(r);box.append(b);});}
 function openHistoryDetail(r){state.historySelected=r;main.innerHTML='<section class="panel"><button class="btn small" id="backhist">← Kembali</button><h2 style="margin-top:14px">Detail Post</h2><p class="muted">'+esc(field(r.product))+'</p>'+(r.image_url?'<img class="preview" src="'+esc(r.image_url)+'" alt="">':'')+'<p style="font-size:12px;line-height:1.6">'+esc(field(r.caption)||"No caption")+'</p><button class="btn primary block" id="schedule" '+(!r.image_url||!r.caption?"disabled":"")+'>Jadwalkan</button></section>';$("#backhist").onclick=()=>{state.historySelected=null;renderHistory();};$("#schedule").onclick=()=>openSchedule(r);}
