@@ -1,0 +1,1912 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Product Ad Image Generator</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    @keyframes slideUp {
+      from { transform: translateY(100%); }
+      to { transform: translateY(0); }
+    }
+    .animate-slide-up {
+      animation: slideUp 0.2s ease-out forwards;
+    }
+  </style>
+</head>
+<body class="bg-[#F5F5F7] text-neutral-900 antialiased selection:bg-black selection:text-white">
+  <div id="app" class="h-[100dvh] w-full bg-[#F5F5F7] flex justify-center overflow-hidden"></div>
+
+  <script>
+    // =========================================================================
+    // KONFIGURASI ENDPOINT & KONSTANTA
+    // =========================================================================
+    const CRUD_MAKE_PROMPT_URL = 'https://jhpbtooefyzdndstlzva.supabase.co/functions/v1/crud-make-prompt';
+    const CRUD_MAKE_WEBHOOK_URL = 'https://jhpbtooefyzdndstlzva.supabase.co/functions/v1/crud-make-webhook';
+    const CALENDAR_SLOTS = ['09:00', '13:00', '19:00'];
+    const UPLOAD_IMAGE_URL = `${CRUD_MAKE_PROMPT_URL}/upload`;
+    const DEFAULT_LOGO_URL = 'https://jhpbtooefyzdndstlzva.supabase.co/storage/v1/object/public/apple/logo.png';
+
+    const EMPTY_VARIABLES = {
+      product: '',
+      style: '',
+      visual_style: '',
+      headline: '',
+      subheadline: '',
+      feature_items: '',
+      composition: '',
+      background: '',
+      typographhy: '',
+      lighting: ''
+    };
+
+    // =========================================================================
+    // STATE APLIKASI TERPUSAT
+    // =========================================================================
+    const state = {
+      anonKey: '',
+      activeTab: 'templates', // 'templates' | 'history' | 'calendar' | 'settings'
+      calendarRecords: [],
+      selectedCalendarRecordId: null,
+      isLoadingCalendar: false,
+      calendarError: null,
+      historyRecords: [],
+      isLoadingHistory: false,
+      historyError: null,
+      selectedHistoryId: null,
+      scheduleRecordId: null,
+      scheduleDate: new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kuala_Lumpur' }).format(new Date()),
+      isScheduling: false,
+      availableScheduleSlots: [],
+      isLoadingScheduleSlots: false,
+      selectedScheduleSlot: '',
+      logoFile: null,
+      logoPreviewUrl: DEFAULT_LOGO_URL,
+      promptGeneratorProduct: '',
+      promptGeneratorInstructions: '',
+      generatedPrompt: '',
+      promptReferenceCount: 0,
+      isGeneratingPrompt: false,
+      promptGeneratorError: null,
+      promptGeneratorCopied: false,
+      records: [],
+      isLoadingRecords: true,
+      recordsError: null,
+      selectedRecordId: null,
+      selectedRecord: null,
+      variables: { ...EMPTY_VARIABLES },
+      isGenerating: false,
+      generationError: null,
+      generatedImageBase64: null,
+      generatedImageMimeType: 'image/png',
+      isUploading: false,
+      uploadError: null,
+      uploadedImageUrl: null,
+      copiedImageUrl: false,
+      isSavingUrl: false,
+      saveUrlError: null,
+      isImageUrlSaved: false,
+      isFullViewOpen: false,
+      toast: null,
+      toastTimer: null
+    };
+
+    // =========================================================================
+    // FUNGSI UTILITAS
+    // =========================================================================
+    function escapeHtml(str) {
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function serializeFieldForEditor(value) {
+      if (value === null || value === undefined) return '';
+      if (typeof value === 'string') return value;
+      if (Array.isArray(value) || typeof value === 'object') {
+        return JSON.stringify(value, null, 2);
+      }
+      return String(value);
+    }
+
+    function extractVariablesFromRecord(record) {
+      if (!record || typeof record !== 'object') return { ...EMPTY_VARIABLES };
+      const typographySource =
+        record.typographhy !== undefined ? record.typographhy : record.typography;
+
+      return {
+        product: serializeFieldForEditor(record.product),
+        style: serializeFieldForEditor(record.style),
+        visual_style: serializeFieldForEditor(record.visual_style),
+        headline: serializeFieldForEditor(record.headline),
+        subheadline: serializeFieldForEditor(record.subheadline),
+        feature_items: serializeFieldForEditor(record.feature_items),
+        composition: serializeFieldForEditor(record.composition),
+        background: serializeFieldForEditor(record.background),
+        typographhy: serializeFieldForEditor(typographySource),
+        lighting: serializeFieldForEditor(record.lighting)
+      };
+    }
+
+    function buildMasterPrompt(vars, logoInstruction = '') {
+      return `Create a premium Instagram Feed advertising design for @appletheexchangetrx.
+Design a visually striking Apple product advertisement inspired by the clean, minimalist, premium aesthetic of Apple's official product campaigns, adapted for @appletheexchangetrx's Instagram branding.
+${logoInstruction}
+product
+${vars.product}
+style
+${vars.style}
+visual_style
+${vars.visual_style}
+headline
+${vars.headline}
+subheadline
+${vars.subheadline}
+feature_items
+${vars.feature_items}
+composition
+${vars.composition}
+background
+${vars.background}
+typographhy
+${vars.typographhy}
+lighting
+${vars.lighting}
+CREATIVE DIRECTION:
+Create a premium product-focused Instagram advertisement with a sophisticated Apple-inspired art direction.
+- Make the product the main visual attraction.
+- Use elegant and minimal visual composition.
+- Maintain a clean and luxurious aesthetic.
+- Create strong visual hierarchy.
+- Use precise product details and realistic materials.
+- Integrate headline and subheadline naturally.
+- Present product features with elegant visual callouts.
+- Avoid unnecessary decorative elements.
+- Maintain generous negative space.
+- Ensure excellent readability on mobile screens.
+BRAND DIRECTION:
+The overall appearance should communicate premium quality, innovation, trust, and exclusivity.
+The design should feel like a professionally art-directed Apple product campaign while maintaining a distinctive identity for @appletheexchangetrx.
+OUTPUT REQUIREMENTS:
+- Instagram Feed format.
+- Aspect ratio: 4:5.
+- Resolution: 1080 × 1350 px.
+- Premium commercial advertising quality.
+- Sharp details and refined typography.
+- Balanced visual hierarchy.
+- Product-centric composition.
+IMPORTANT:
+Follow all variables precisely. Do not invent additional headlines, product specifications, or promotional text. Render all supplied text accurately.`;
+    }
+
+    function copyTextToClipboard(text) {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      let ok = false;
+      try {
+        ok = document.execCommand('copy');
+      } catch {
+        ok = false;
+      }
+      document.body.removeChild(textarea);
+      return ok;
+    }
+
+    async function fetchWithBackoff(url, options, retries = 3) {
+      let delay = 1000;
+      for (let i = 0; i < retries; i++) {
+        try {
+          const response = await fetch(url, options);
+          if (response.ok) return response;
+          if (response.status === 429 || response.status >= 500) {
+            if (i < retries - 1) {
+              await new Promise((r) => setTimeout(r, delay));
+              delay *= 2;
+              continue;
+            }
+          }
+          return response;
+        } catch (err) {
+          if (i === retries - 1) throw err;
+          await new Promise((r) => setTimeout(r, delay));
+          delay *= 2;
+        }
+      }
+    }
+
+    function getRecordHeadlinePreview(record) {
+      if (!record?.headline) return '';
+      if (typeof record.headline === 'string') return record.headline;
+      if (typeof record.headline === 'object' && record.headline.text) {
+        return String(record.headline.text);
+      }
+      return '';
+    }
+
+    function showToast(type, message) {
+      if (state.toastTimer) clearTimeout(state.toastTimer);
+      state.toast = { type, message };
+      render();
+      state.toastTimer = setTimeout(() => {
+        state.toast = null;
+        render();
+      }, 4000);
+    }
+
+    function getEdgeHeaders(includeJsonContentType = false) {
+      const headers = {};
+      if (includeJsonContentType) {
+        headers['Content-Type'] = 'application/json';
+      }
+      if (state.anonKey.trim()) {
+        headers['apikey'] = state.anonKey.trim();
+        headers['Authorization'] = `Bearer ${state.anonKey.trim()}`;
+      }
+      return headers;
+    }
+
+    function fileToBase64(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = () => {
+          const result = reader.result;
+          const base64 = result.includes(',') ? result.split(',')[1] : result;
+          resolve(base64);
+        };
+        reader.onerror = (error) => reject(error);
+      });
+    }
+
+    function base64ToImageFile(base64Data, mimeType) {
+      const byteCharacters = atob(base64Data);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const ext =
+        mimeType === 'image/jpeg'
+          ? 'jpg'
+          : mimeType === 'image/webp'
+          ? 'webp'
+          : 'png';
+      const safeSlug = (state.variables.product || state.selectedRecord?.id || 'apple-ad')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, '');
+      const fileName = `${safeSlug || 'ad'}-${Date.now()}.${ext}`;
+      const blob = new Blob([byteArray], { type: mimeType });
+      return new File([blob], fileName, { type: mimeType });
+    }
+
+    // =========================================================================
+    // LOGIKA API & BISNIS
+    // =========================================================================
+    async function loadRecords() {
+      state.isLoadingRecords = true;
+      state.recordsError = null;
+      render();
+      try {
+        const response = await fetch(CRUD_MAKE_PROMPT_URL, {
+          method: 'GET',
+          headers: getEdgeHeaders(false)
+        });
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.error || `Edge Function returned HTTP ${response.status}.`);
+        }
+        const data = await response.json();
+        if (!Array.isArray(data)) {
+          throw new Error('Invalid response format: expected an array of prompt records.');
+        }
+        state.records = data.filter((record) => record?.is_ready === false);
+      } catch (err) {
+        state.recordsError = err.message || 'Failed to connect to crud-make-prompt Edge Function.';
+      } finally {
+        state.isLoadingRecords = false;
+        render();
+      }
+    }
+
+    async function loadHistory() {
+      state.isLoadingHistory = true;
+      state.historyError = null;
+      render();
+      try {
+        const response = await fetch(CRUD_MAKE_PROMPT_URL, {
+          method: 'GET',
+          headers: getEdgeHeaders(false)
+        });
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.error || `Failed to load schedule (HTTP ${response.status}).`);
+        }
+        const data = await response.json();
+        if (!Array.isArray(data)) {
+          throw new Error('Invalid response format: expected an array of prompt records.');
+        }
+        state.historyRecords = data.filter((record) => record?.is_ready === true);
+      } catch (err) {
+        state.historyError = err.message || 'Failed to load schedule.';
+      } finally {
+        state.isLoadingHistory = false;
+        render();
+      }
+    }
+
+    async function loadCalendar() {
+      state.isLoadingCalendar = true;
+      state.calendarError = null;
+      render();
+      try {
+        const response = await fetch(`${CRUD_MAKE_WEBHOOK_URL}/get`, {
+          method: 'GET',
+          headers: getEdgeHeaders(false)
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload?.success === false) {
+          throw new Error(payload?.error || `Failed to load calendar (HTTP ${response.status}).`);
+        }
+        if (!Array.isArray(payload?.data)) {
+          throw new Error('Invalid calendar response: expected data array.');
+        }
+        state.calendarRecords = payload.data;
+      } catch (err) {
+        state.calendarError = err.message || 'Failed to load calendar.';
+      } finally {
+        state.isLoadingCalendar = false;
+        render();
+      }
+    }
+
+    async function loadScheduleAvailability(date) {
+      if (!date) return;
+      state.isLoadingScheduleSlots = true;
+      state.availableScheduleSlots = [];
+      state.selectedScheduleSlot = '';
+      render();
+      try {
+        const response = await fetch(`${CRUD_MAKE_WEBHOOK_URL}/get`, {
+          method: 'GET',
+          headers: getEdgeHeaders(false)
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload?.success === false || !Array.isArray(payload?.data)) {
+          throw new Error(payload?.error || 'Unable to load existing schedule date and time.');
+        }
+        const occupiedTimes = new Set(
+          payload.data
+            .filter((item) => String(item.date || '').slice(0, 10) === date)
+            .map((item) => String(item.time || '').slice(0, 5))
+        );
+        state.availableScheduleSlots = CALENDAR_SLOTS.filter((slot) => !occupiedTimes.has(slot));
+      } catch (err) {
+        showToast('error', err.message || 'Failed to check schedule availability.');
+      } finally {
+        state.isLoadingScheduleSlots = false;
+        render();
+      }
+    }
+
+    async function handleScheduleRecord(record) {
+      if (!record?.image_url || !record?.caption) {
+        showToast('error', 'Image URL or caption is missing for this product.');
+        return;
+      }
+      if (!state.scheduleDate || !state.selectedScheduleSlot) {
+        showToast('error', 'Please select an available date and time slot.');
+        return;
+      }
+
+      state.isScheduling = true;
+      render();
+      try {
+        const existingResponse = await fetch(`${CRUD_MAKE_WEBHOOK_URL}/get`, {
+          method: 'GET',
+          headers: getEdgeHeaders(false)
+        });
+        const existingPayload = await existingResponse.json().catch(() => ({}));
+        if (!existingResponse.ok || existingPayload?.success === false || !Array.isArray(existingPayload?.data)) {
+          throw new Error(existingPayload?.error || 'Unable to verify existing calendar slots.');
+        }
+
+        const slotIsOccupied = existingPayload.data.some((item) =>
+          String(item.date || '').slice(0, 10) === state.scheduleDate &&
+          String(item.time || '').slice(0, 5) === state.selectedScheduleSlot
+        );
+        if (slotIsOccupied) {
+          await loadScheduleAvailability(state.scheduleDate);
+          throw new Error('Slot tersebut baru saja terisi. Silakan pilih slot waktu lain.');
+        }
+
+        const response = await fetch(`${CRUD_MAKE_WEBHOOK_URL}/post`, {
+          method: 'POST',
+          headers: { ...getEdgeHeaders(true) },
+          body: JSON.stringify({
+            image_url: record.image_url,
+            caption: record.caption,
+            date: state.scheduleDate,
+            time: state.selectedScheduleSlot
+          })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload?.success === false) {
+          throw new Error(payload?.error || `Failed to schedule slot ${state.selectedScheduleSlot}.`);
+        }
+
+        let promptCleared = false;
+        try {
+          const clearResponse = await fetch(
+            `${CRUD_MAKE_PROMPT_URL}?id=${encodeURIComponent(record.id)}`,
+            {
+              method: 'PATCH',
+              headers: getEdgeHeaders(true),
+              body: JSON.stringify({
+                image_url: null,
+                caption: null
+              })
+            }
+          );
+          const clearPayload = await clearResponse.json().catch(() => ({}));
+          if (!clearResponse.ok || clearPayload?.error) {
+            throw new Error(clearPayload?.error || `Failed to clear prompt fields (HTTP ${clearResponse.status}).`);
+          }
+          promptCleared = true;
+        } catch (clearError) {
+          console.error('Schedule saved, but prompt fields could not be cleared:', clearError);
+        }
+
+        if (promptCleared) {
+          showToast('success', `Post berhasil dijadwalkan pada ${state.scheduleDate} pukul ${state.selectedScheduleSlot}. Image URL dan caption telah dikosongkan.`);
+        } else {
+          showToast('error', `Jadwal berhasil disimpan, tetapi image_url dan caption belum berhasil dikosongkan. Silakan coba lagi.`);
+        }
+        state.scheduleRecordId = null;
+        state.selectedScheduleSlot = '';
+        await Promise.all([loadCalendar(), loadRecords(), loadHistory()]);
+      } catch (err) {
+        showToast('error', err.message || 'Failed to schedule this product.');
+      } finally {
+        state.isScheduling = false;
+        render();
+      }
+    }
+
+    async function handleGeneratePrompt() {
+      const product = state.promptGeneratorProduct.trim();
+      if (!product) {
+        state.promptGeneratorError = 'Masukkan nama produk terlebih dahulu.';
+        render();
+        return;
+      }
+
+      state.isGeneratingPrompt = true;
+      state.promptGeneratorError = null;
+      state.generatedPrompt = '';
+      state.promptGeneratorCopied = false;
+      render();
+
+      try {
+        const referenceResponse = await fetch(CRUD_MAKE_PROMPT_URL, {
+          method: 'GET',
+          headers: getEdgeHeaders(false)
+        });
+
+        if (!referenceResponse.ok) {
+          const errorPayload = await referenceResponse.json().catch(() => ({}));
+          throw new Error(
+            errorPayload.error || `Gagal membaca referensi make_prompt (HTTP ${referenceResponse.status}).`
+          );
+        }
+
+        const referenceRows = await referenceResponse.json();
+        if (!Array.isArray(referenceRows) || referenceRows.length === 0) {
+          throw new Error('Data referensi make_prompt tidak ditemukan.');
+        }
+
+        const referenceData = referenceRows.map((record) => ({
+          product: record.product ?? '',
+          style: record.style ?? '',
+          visual_style: record.visual_style ?? '',
+          headline: record.headline ?? '',
+          subheadline: record.subheadline ?? '',
+          feature_items: record.feature_items ?? '',
+          composition: record.composition ?? '',
+          background: record.background ?? '',
+          typographhy: record.typographhy ?? record.typography ?? '',
+          lighting: record.lighting ?? ''
+        }));
+
+        state.promptReferenceCount = referenceData.length;
+
+        const instruction = `You are an expert AI Prompt Engineer specializing in premium Apple product advertising visuals for Apple The Exchange TRX.
+
+TASK:
+Create one complete, production-ready image-generation prompt for the requested product. First analyze the supplied make_prompt reference records to learn their creative patterns, field structure, composition logic, visual direction, typography, lighting, and level of detail. Use those records as reference examples, not as content to copy verbatim.
+
+PRODUCT:
+${product}
+
+ADDITIONAL USER INSTRUCTIONS:
+${state.promptGeneratorInstructions.trim() || 'No additional instructions.'}
+
+REFERENCE RECORDS FROM public.make_prompt:
+${JSON.stringify(referenceData, null, 2)}
+
+RULES:
+- Return only the finished prompt. Do not include analysis, preamble, markdown fences, or explanations.
+- Preserve the visual quality and useful creative patterns found in the references while creating an original prompt for the requested product.
+- Do not invent product specifications, technical features, prices, claims, or promotional offers. If the user did not provide a fact, avoid stating it as fact.
+- Make the product the clear visual hero, with premium Apple-inspired art direction and a refined commercial-advertising finish.
+- Include specific direction for product appearance, composition, environment/background, lighting, typography, headline/subheadline treatment, feature presentation, color and mood, camera/render quality, and negative constraints where appropriate.
+- Ensure all visible text requested in the prompt is spelled exactly and is readable.
+- Keep the output directly usable by an image-generation model and sufficiently detailed.
+- Follow any explicit additional user instructions unless they conflict with the rules above.`;
+
+        const apiKey = '';
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+        const response = await fetchWithBackoff(geminiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: instruction }] }],
+            generationConfig: {
+              temperature: 0.8,
+              maxOutputTokens: 8192
+            }
+          })
+        });
+
+        const result = await response.json().catch(() => null);
+        if (!response.ok || !result) {
+          throw new Error(
+            result?.error?.message || `Gemini Prompt Generator gagal (HTTP ${response.status}).`
+          );
+        }
+
+        const output = result?.candidates?.[0]?.content?.parts
+          ?.map((part) => part.text || '')
+          .join('')
+          .trim();
+
+        if (!output) {
+          const blockReason = result?.promptFeedback?.blockReason;
+          throw new Error(
+            blockReason
+              ? `Permintaan tidak dapat diproses: ${blockReason}.`
+              : 'Gemini tidak mengembalikan prompt. Silakan coba lagi.'
+          );
+        }
+
+        state.generatedPrompt = output;
+        showToast('success', `Prompt berhasil dibuat menggunakan ${referenceData.length} referensi.`);
+      } catch (err) {
+        state.promptGeneratorError = err.message || 'Gagal membuat prompt.';
+      } finally {
+        state.isGeneratingPrompt = false;
+        render();
+      }
+    }
+
+    async function handleBackToTemplates() {
+      if (!state.selectedRecordId || state.isGenerating || state.isUploading || state.isSavingUrl) return;
+
+      try {
+        const response = await fetch(
+          `${CRUD_MAKE_PROMPT_URL}?id=${encodeURIComponent(state.selectedRecordId)}`,
+          {
+            method: 'GET',
+            headers: getEdgeHeaders(false)
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(`Unable to verify template readiness (HTTP ${response.status}).`);
+        }
+
+        const payload = await response.json();
+        const record = Array.isArray(payload) ? payload[0] : payload;
+
+        if (!record || record.is_ready !== true) {
+          showToast('error', 'Template is not marked as ready yet. Please wait and try again.');
+          return;
+        }
+
+        state.selectedRecordId = null;
+        state.selectedRecord = null;
+        state.generatedImageBase64 = null;
+        state.uploadedImageUrl = null;
+        state.isImageUrlSaved = false;
+        state.generationError = null;
+        state.uploadError = null;
+        state.saveUrlError = null;
+        state.isFullViewOpen = false;
+        await loadRecords();
+      } catch (err) {
+        showToast('error', err.message || 'Failed to verify template readiness.');
+      }
+    }
+
+    async function handleSelectRecord(recordId) {
+      const recordItem = state.records.find((r) => String(r.id) === String(recordId));
+      if (!recordItem) return;
+
+      state.selectedRecordId = recordItem.id;
+      state.generationError = null;
+      state.uploadError = null;
+      state.saveUrlError = null;
+      state.generatedImageBase64 = null;
+      state.uploadedImageUrl = null;
+      state.isImageUrlSaved = false;
+      render();
+
+      let authoritativeRecord = recordItem;
+      try {
+        const response = await fetch(
+          `${CRUD_MAKE_PROMPT_URL}?id=${encodeURIComponent(recordItem.id)}`,
+          {
+            method: 'GET',
+            headers: getEdgeHeaders(false)
+          }
+        );
+
+        if (response.ok) {
+          const fetchedSingle = await response.json();
+          if (fetchedSingle && typeof fetchedSingle === 'object' && !Array.isArray(fetchedSingle)) {
+            authoritativeRecord = fetchedSingle;
+          }
+        }
+      } catch {
+        // Fallback to recordItem
+      }
+
+      state.selectedRecord = authoritativeRecord;
+      const extracted = extractVariablesFromRecord(authoritativeRecord);
+      state.variables = extracted;
+
+      await executeGeneration(extracted, recordItem.id);
+    }
+
+    async function saveImageUrlToPromptRecord(recordId, imageUrl) {
+      if (!recordId || !imageUrl) return;
+      state.isSavingUrl = true;
+      state.saveUrlError = null;
+      state.isImageUrlSaved = false;
+      render();
+
+      try {
+        const response = await fetch(
+          `${CRUD_MAKE_PROMPT_URL}?id=${encodeURIComponent(recordId)}`,
+          {
+            method: 'PATCH',
+            headers: getEdgeHeaders(true),
+            body: JSON.stringify({ image_url: imageUrl, is_ready: true })
+          }
+        );
+
+        const responseText = await response.text();
+        let payload = {};
+        try {
+          payload = responseText ? JSON.parse(responseText) : {};
+        } catch {
+          throw new Error(`Invalid response from crud-make-prompt PATCH (HTTP ${response.status}).`);
+        }
+
+        if (!response.ok) {
+          throw new Error(
+            payload.error ||
+              payload.message ||
+              `Failed to update image_url (HTTP ${response.status}).`
+          );
+        }
+
+        state.isImageUrlSaved = true;
+        if (state.selectedRecord && state.selectedRecord.id === recordId) {
+          state.selectedRecord = { ...state.selectedRecord, ...payload, image_url: imageUrl, is_ready: true };
+        }
+        state.records = state.records.map((item) =>
+          item.id === recordId ? { ...item, ...payload, image_url: imageUrl, is_ready: true } : item
+        );
+        showToast('success', 'image_url saved to prompt record.');
+      } catch (err) {
+        state.saveUrlError = err.message || 'Failed to save image_url to database.';
+      } finally {
+        state.isSavingUrl = false;
+        render();
+      }
+    }
+
+    async function uploadGeneratedImageToEdge(base64Data, mimeType, recordId) {
+      state.isUploading = true;
+      state.uploadError = null;
+      state.saveUrlError = null;
+      state.isImageUrlSaved = false;
+      render();
+
+      try {
+        const imageFile = base64ToImageFile(base64Data, mimeType);
+        const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+        if (!allowedTypes.includes(imageFile.type)) {
+          throw new Error('crud-make-prompt only accepts JPEG, PNG, or WEBP images.');
+        }
+        if (imageFile.size > 10 * 1024 * 1024) {
+          throw new Error('Image size must not exceed 10 MB.');
+        }
+        const formData = new FormData();
+        formData.append('file', imageFile);
+
+        const response = await fetch(UPLOAD_IMAGE_URL, {
+          method: 'POST',
+          headers: getEdgeHeaders(false),
+          body: formData
+        });
+
+        const responseText = await response.text();
+        let payload = {};
+        try {
+          payload = responseText ? JSON.parse(responseText) : {};
+        } catch {
+          throw new Error(`Invalid non-JSON response from upload-image (HTTP ${response.status}).`);
+        }
+
+        if (!response.ok) {
+          throw new Error(
+            payload.error ||
+              payload.message ||
+              `Upload failed with HTTP ${response.status}.`
+          );
+        }
+
+        const returnedUrl =
+          payload.image_url ||
+          payload.publicUrl ||
+          payload.public_url ||
+          payload.url ||
+          payload?.data?.image_url ||
+          payload?.data?.publicUrl;
+
+        if (!returnedUrl || typeof returnedUrl !== 'string') {
+          throw new Error(
+            'Upload succeeded, but upload-image response did not include a valid public image URL.'
+          );
+        }
+
+        state.uploadedImageUrl = returnedUrl;
+        state.isUploading = false;
+        render();
+
+        if (recordId) {
+          await saveImageUrlToPromptRecord(recordId, returnedUrl);
+        } else {
+          showToast('success', 'Image uploaded to Supabase Storage.');
+        }
+      } catch (err) {
+        state.uploadError = err.message || 'Network interruption or failure during image upload.';
+        showToast('error', 'Image upload failed.');
+      } finally {
+        state.isUploading = false;
+        render();
+      }
+    }
+
+    async function executeGeneration(currentVars, recordId = state.selectedRecord?.id) {
+      state.isGenerating = true;
+      state.generationError = null;
+      state.uploadError = null;
+      state.uploadedImageUrl = null;
+      render();
+
+      try {
+        let logoInstruction = '';
+        let logoBase64Data = null;
+        let logoMimeType = 'image/png';
+        try {
+          let logoSourceFile = state.logoFile;
+          if (!logoSourceFile) {
+            const logoResponse = await fetch(DEFAULT_LOGO_URL);
+            if (!logoResponse.ok) {
+              throw new Error(`Unable to load default brand logo (HTTP ${logoResponse.status}).`);
+            }
+            const logoBlob = await logoResponse.blob();
+            logoSourceFile = new File([logoBlob], 'apple-store-malaysia-logo.png', {
+              type: logoBlob.type || 'image/png'
+            });
+          }
+          logoBase64Data = await fileToBase64(logoSourceFile);
+          logoMimeType = logoSourceFile.type || 'image/png';
+          logoInstruction = `brand_logo_placement: Use the provided original brand logo exactly as supplied. Preserve its original shape, proportions, colors, and details without redesigning, recreating, distorting, or altering it. Position it cleanly at the top-left corner of the advertisement canvas.`;
+        } catch (logoError) {
+          throw new Error(`Brand logo could not be loaded: ${logoError.message}`);
+        }
+
+        const promptToSend = buildMasterPrompt(currentVars, logoInstruction);
+        const apiKey = '';
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent?key=${apiKey}`;
+
+        const userParts = [{ text: promptToSend }];
+        if (logoBase64Data) {
+          userParts.push({
+            inlineData: {
+              mimeType: logoMimeType,
+              data: logoBase64Data
+            }
+          });
+        }
+
+        const requestPayload = {
+          contents: [
+            {
+              role: 'user',
+              parts: userParts
+            }
+          ],
+          generationConfig: {
+            responseModalities: ['IMAGE'],
+            imageConfig: {
+              aspectRatio: '4:5'
+            }
+          }
+        };
+
+        const response = await fetchWithBackoff(geminiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestPayload)
+        });
+
+        const result = await response.json().catch(() => null);
+
+        if (!response.ok || !result) {
+          throw new Error(
+            result?.error?.message ||
+              `Gemini Image Generation unavailable or failed (HTTP ${response.status}).`
+          );
+        }
+
+        const inlinePart = result?.candidates?.[0]?.content?.parts?.find((p) => p.inlineData);
+
+        if (!inlinePart?.inlineData?.data) {
+          throw new Error(
+            'Gemini returned an invalid or empty image output. Please try selecting the template again.'
+          );
+        }
+
+        const b64 = inlinePart.inlineData.data;
+        const mime = inlinePart.inlineData.mimeType || 'image/png';
+
+        state.generatedImageBase64 = b64;
+        state.generatedImageMimeType = mime;
+        state.isGenerating = false;
+        render();
+
+        await uploadGeneratedImageToEdge(b64, mime, recordId);
+      } catch (err) {
+        state.isGenerating = false;
+        state.generationError = err.message || 'Image generation failed.';
+        showToast('error', 'Image generation failed.');
+        render();
+      }
+    }
+
+    function handleDownloadImage() {
+      if (!state.generatedImageBase64) return;
+      const ext =
+        state.generatedImageMimeType === 'image/jpeg'
+          ? 'jpg'
+          : state.generatedImageMimeType === 'image/webp'
+          ? 'webp'
+          : 'png';
+      const link = document.createElement('a');
+      link.href = `data:${state.generatedImageMimeType};base64,${state.generatedImageBase64}`;
+      link.download = `appletheexchangetrx-${state.selectedRecord?.id || 'ad'}-1080x1350.${ext}`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+
+    // =========================================================================
+    // KOMPONEN RENDER TAMPILAN
+    // =========================================================================
+    function renderToast() {
+      if (!state.toast) return '';
+      const isErr = state.toast.type === 'error';
+      return `
+        <div class="absolute top-4 left-4 right-4 z-30 pointer-events-none flex justify-center">
+          <div class="pointer-events-auto flex items-center gap-2 px-3.5 py-2.5 rounded-2xl border shadow-sm text-xs font-medium max-w-full ${
+            isErr ? 'bg-red-50 border-red-200 text-red-900' : 'bg-black border-neutral-800 text-white'
+          }">
+            <i data-lucide="${isErr ? 'alert-circle' : 'check-circle-2'}" class="w-4 h-4 ${isErr ? 'text-red-600' : 'text-emerald-400'} shrink-0"></i>
+            <span class="truncate">${escapeHtml(state.toast.message)}</span>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderHistoryTab() {
+      const selectedHistoryRecord = state.historyRecords.find((r) => String(r.id) === String(state.selectedHistoryId)) || null;
+
+      if (selectedHistoryRecord) {
+        const productName = serializeFieldForEditor(selectedHistoryRecord.product) || 'Untitled Product';
+        const captionText = serializeFieldForEditor(selectedHistoryRecord.caption) || 'No caption';
+        const canSchedule = Boolean(selectedHistoryRecord.image_url && selectedHistoryRecord.caption && !state.isScheduling);
+
+        return `
+          <section class="flex-1 min-h-0 flex flex-col bg-white rounded-2xl border border-neutral-200 shadow-2xs overflow-hidden">
+            <div class="shrink-0 flex items-center gap-3 p-3 border-b border-neutral-200">
+              <button type="button" data-action="close-history-detail" class="w-9 h-9 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-neutral-700 inline-flex items-center justify-center" aria-label="Kembali ke daftar Jadwal">
+                <i data-lucide="arrow-left" class="w-4 h-4"></i>
+              </button>
+              <div class="min-w-0 flex-1">
+                <h2 class="text-sm font-semibold text-black">Detail Post</h2>
+                <p class="text-[11px] text-neutral-500 truncate">${escapeHtml(productName)}</p>
+              </div>
+            </div>
+            <div class="flex-1 min-h-0 overflow-y-auto">
+              <div class="flex items-center gap-2 px-3 py-3">
+                <img src="${escapeHtml(state.logoPreviewUrl || DEFAULT_LOGO_URL)}" alt="Apple Store Malaysia" class="w-8 h-8 rounded-full object-cover border border-neutral-200" />
+                <div class="min-w-0">
+                  <p class="text-xs font-semibold text-neutral-900">@appletheexchangetrx</p>
+                  <p class="text-[10px] text-neutral-500 truncate">${escapeHtml(productName)}</p>
+                </div>
+              </div>
+              <div class="w-full aspect-[4/5] bg-neutral-100">
+                ${
+                  selectedHistoryRecord.image_url
+                    ? `<img src="${escapeHtml(selectedHistoryRecord.image_url)}" alt="${escapeHtml(productName)}" class="w-full h-full object-cover" />`
+                    : `<div class="w-full h-full flex items-center justify-center text-xs text-neutral-400">No image available</div>`
+                }
+              </div>
+              <div class="p-3 space-y-3">
+                <div class="flex items-center gap-3 text-neutral-800">
+                  <span class="text-lg leading-none">♡</span>
+                  <span class="text-lg leading-none">○</span>
+                  <span class="text-lg leading-none">↗</span>
+                </div>
+                <p class="text-xs leading-relaxed text-neutral-800 whitespace-pre-wrap break-words"><span class="font-semibold">@appletheexchangetrx </span>${escapeHtml(captionText)}</p>
+              </div>
+            </div>
+            <div class="shrink-0 border-t border-neutral-200 bg-white p-3">
+              <button type="button" data-action="open-schedule-modal" data-id="${escapeHtml(selectedHistoryRecord.id)}" ${!canSchedule ? 'disabled' : ''} class="w-full h-11 rounded-xl bg-black text-white text-xs font-semibold disabled:opacity-40">
+                Jadwalkan
+              </button>
+            </div>
+          </section>
+        `;
+      }
+
+      return `
+        <section class="flex-1 min-h-0 flex flex-col bg-white rounded-2xl border border-neutral-200 shadow-2xs overflow-hidden">
+          <div class="shrink-0 flex items-center justify-between gap-3 p-3 border-b border-neutral-200">
+            <div class="min-w-0">
+              <h2 class="text-sm font-semibold text-black">Jadwal</h2>
+              <p class="text-[11px] text-neutral-500">${state.historyRecords.length} completed products</p>
+            </div>
+            <button type="button" data-action="refresh-history" ${state.isLoadingHistory ? 'disabled' : ''} class="h-8 px-3 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-xs font-medium text-neutral-700 inline-flex items-center gap-1.5 disabled:opacity-50">
+              <i data-lucide="refresh-cw" class="w-3.5 h-3.5 ${state.isLoadingHistory ? 'animate-spin' : ''}"></i>
+              Refresh
+            </button>
+          </div>
+          <div class="flex-1 min-h-0 overflow-y-auto p-3">
+            ${
+              state.isLoadingHistory
+                ? `<div class="py-8 flex items-center justify-center gap-2 text-xs text-neutral-500"><i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i>Loading schedule...</div>`
+                : state.historyError
+                ? `<div class="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-800 space-y-2"><p>${escapeHtml(state.historyError)}</p><button type="button" data-action="refresh-history" class="h-8 px-3 rounded-lg bg-black text-white">Retry</button></div>`
+                : state.historyRecords.length === 0
+                ? `<div class="py-8 text-center text-xs text-neutral-500">No completed products found.</div>`
+                : `<div class="space-y-2">
+                    ${state.historyRecords.map((record) => {
+                      const productName = serializeFieldForEditor(record.product) || 'Untitled Product';
+                      const captionText = serializeFieldForEditor(record.caption) || 'No caption';
+                      return `
+                        <button type="button" data-action="select-history" data-id="${escapeHtml(record.id)}" class="w-full flex items-center gap-3 p-2.5 text-left rounded-xl border border-neutral-200 bg-white hover:bg-neutral-50">
+                          <div class="w-[62px] aspect-[4/5] shrink-0 overflow-hidden rounded-lg bg-neutral-100">
+                            ${
+                              record.image_url
+                                ? `<img src="${escapeHtml(record.image_url)}" alt="${escapeHtml(productName)}" class="w-full h-full object-cover" loading="lazy" />`
+                                : `<div class="w-full h-full flex items-center justify-center text-[9px] text-neutral-400">No image</div>`
+                            }
+                          </div>
+                          <div class="min-w-0 flex-1">
+                            <p class="text-xs font-semibold text-neutral-900 truncate">${escapeHtml(productName)}</p>
+                            <p class="mt-1 text-[10px] text-neutral-500 line-clamp-2">${escapeHtml(captionText)}</p>
+                            <p class="mt-2 text-[10px] font-medium text-neutral-700">Lihat detail post</p>
+                          </div>
+                          <i data-lucide="chevron-right" class="w-4 h-4 shrink-0 text-neutral-400"></i>
+                        </button>
+                      `;
+                    }).join('')}
+                  </div>`
+            }
+          </div>
+        </section>
+      `;
+    }
+
+    function renderCalendarTab() {
+      const selectedCalendarRecord = state.calendarRecords.find((r) => String(r.id) === String(state.selectedCalendarRecordId)) || null;
+
+      if (selectedCalendarRecord) {
+        const captionText = serializeFieldForEditor(selectedCalendarRecord.caption) || 'No caption';
+        return `
+          <section class="flex-1 min-h-0 flex flex-col bg-white rounded-2xl border border-neutral-200 shadow-2xs overflow-hidden">
+            <div class="shrink-0 flex items-center gap-3 p-3 border-b border-neutral-200">
+              <button type="button" data-action="close-calendar-detail" class="w-9 h-9 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-neutral-700 inline-flex items-center justify-center" aria-label="Kembali ke Calendar">
+                <i data-lucide="arrow-left" class="w-4 h-4"></i>
+              </button>
+              <div class="min-w-0">
+                <h2 class="text-sm font-semibold text-black">Detail Post</h2>
+                <p class="text-[11px] text-neutral-500">${escapeHtml(String(selectedCalendarRecord.date || '').slice(0, 10))} · ${escapeHtml(String(selectedCalendarRecord.time || '').slice(0, 5))} MYT</p>
+              </div>
+            </div>
+            <div class="flex-1 min-h-0 overflow-y-auto">
+              <div class="w-full aspect-[4/5] bg-neutral-100">
+                ${
+                  selectedCalendarRecord.image_url
+                    ? `<img src="${escapeHtml(selectedCalendarRecord.image_url)}" alt="Scheduled post" class="w-full h-full object-contain" />`
+                    : `<div class="w-full h-full flex items-center justify-center text-xs text-neutral-400">No image available</div>`
+                }
+              </div>
+              <div class="p-4 space-y-3">
+                <div class="flex items-center gap-3 text-neutral-800">
+                  <span class="text-lg leading-none">♡</span>
+                  <span class="text-lg leading-none">○</span>
+                  <span class="text-lg leading-none">↗</span>
+                </div>
+                <p class="text-xs leading-relaxed text-neutral-800 whitespace-pre-wrap break-words"><span class="font-semibold">@appletheexchangetrx </span>${escapeHtml(captionText)}</p>
+              </div>
+            </div>
+            <div class="shrink-0 border-t border-neutral-200 bg-white p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+              <button type="button" data-action="copy-calendar-caption" ${!selectedCalendarRecord.caption ? 'disabled' : ''} class="w-full h-11 rounded-xl bg-black text-white text-xs font-semibold disabled:opacity-40">
+                Copy Caption
+              </button>
+            </div>
+          </section>
+        `;
+      }
+
+      const uniqueDates = [...new Set(state.calendarRecords.map((r) => String(r.date || '').slice(0, 10)).filter(Boolean))].sort();
+
+      return `
+        <section class="flex-1 min-h-0 flex flex-col bg-white rounded-2xl border border-neutral-200 p-3 shadow-2xs">
+          <div class="shrink-0 flex items-center justify-between gap-3 pb-3 border-b border-neutral-200">
+            <div>
+              <h2 class="text-sm font-semibold text-black">Content Calendar</h2>
+              <p class="text-[11px] text-neutral-500">3 daily slots · Kuala Lumpur time</p>
+            </div>
+            <button type="button" data-action="refresh-calendar" ${state.isLoadingCalendar ? 'disabled' : ''} class="h-8 px-3 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-xs font-medium text-neutral-700 inline-flex items-center gap-1.5 disabled:opacity-50">
+              <i data-lucide="refresh-cw" class="w-3.5 h-3.5 ${state.isLoadingCalendar ? 'animate-spin' : ''}"></i>
+              Refresh
+            </button>
+          </div>
+          <div class="flex-1 min-h-0 overflow-y-auto pt-3 space-y-5">
+            ${
+              state.isLoadingCalendar
+                ? `<div class="py-8 flex items-center justify-center gap-2 text-xs text-neutral-500"><i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i>Loading calendar...</div>`
+                : state.calendarError
+                ? `<div class="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-800 space-y-2"><p>${escapeHtml(state.calendarError)}</p><button type="button" data-action="refresh-calendar" class="h-8 px-3 rounded-lg bg-black text-white">Retry</button></div>`
+                : state.calendarRecords.length === 0
+                ? `<div class="py-12 text-center text-xs text-neutral-500">No calendar records found.</div>`
+                : uniqueDates.map((date) => {
+                    const dayLabel = new Date(`${date}T00:00:00+08:00`).toLocaleDateString('en-MY', {
+                      timeZone: 'Asia/Kuala_Lumpur',
+                      weekday: 'long',
+                      day: 'numeric',
+                      month: 'long',
+                      year: 'numeric'
+                    });
+                    return `
+                      <section class="space-y-2">
+                        <div class="flex items-center justify-between px-0.5">
+                          <h3 class="text-xs font-semibold text-neutral-900">${escapeHtml(dayLabel)}</h3>
+                          <span class="text-[10px] text-neutral-400">3 slots · MYT</span>
+                        </div>
+                        <div class="grid grid-cols-3 gap-[2px]">
+                          ${CALENDAR_SLOTS.map((slot) => {
+                            const record = state.calendarRecords.find((item) => String(item.date || '').slice(0, 10) === date && String(item.time || '').slice(0, 5) === slot);
+                            return `
+                              <button type="button" ${record ? `data-action="select-calendar" data-id="${escapeHtml(record.id)}"` : 'disabled'} class="relative aspect-square min-w-0 overflow-hidden bg-neutral-100 text-left disabled:cursor-default">
+                                ${
+                                  record?.image_url
+                                    ? `<img src="${escapeHtml(record.image_url)}" alt="Scheduled post ${escapeHtml(date)} ${escapeHtml(slot)}" class="w-full h-full object-cover" loading="lazy" />`
+                                    : `<div class="w-full h-full flex flex-col items-center justify-center gap-1 text-neutral-400">
+                                        <span class="text-xl leading-none">${record ? '▧' : '+'}</span>
+                                        <span class="text-[9px] font-medium">${record ? 'No image' : 'Empty'}</span>
+                                      </div>`
+                                }
+                                <div class="absolute inset-x-0 bottom-0 px-1.5 py-1 bg-gradient-to-t from-black/75 to-transparent">
+                                  <p class="text-[9px] font-semibold text-white text-center">${escapeHtml(slot)}</p>
+                                </div>
+                                ${
+                                  record
+                                    ? `<div class="absolute top-1 right-1 w-4 h-4 rounded-full bg-black/55 flex items-center justify-center">
+                                        <i data-lucide="check" class="w-2.5 h-2.5 text-white"></i>
+                                      </div>`
+                                    : ''
+                                }
+                              </button>
+                            `;
+                          }).join('')}
+                        </div>
+                      </section>
+                    `;
+                  }).join('')
+            }
+          </div>
+        </section>
+      `;
+    }
+
+    function renderSettingsTab() {
+      return `
+        <section class="flex-1 min-h-0 overflow-y-auto bg-white rounded-2xl border border-neutral-200 p-4 space-y-4 shadow-2xs">
+          <div>
+            <h2 class="text-sm font-semibold text-black">Settings</h2>
+            <p class="mt-1 text-[11px] text-neutral-500">
+              Manage your brand assets and application preferences
+            </p>
+          </div>
+
+          <div class="rounded-xl border border-neutral-200 p-4 space-y-3">
+            <div class="flex items-center gap-2">
+              <i data-lucide="cloud-upload" class="w-4 h-4 text-neutral-600"></i>
+              <div>
+                <h3 class="text-xs font-semibold text-black">Brand Logo</h3>
+                <p class="text-[10px] text-neutral-500">Logo used when generating product advertisements</p>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-3">
+              <div class="w-16 h-16 shrink-0 rounded-xl border border-neutral-200 bg-neutral-50 overflow-hidden flex items-center justify-center">
+                ${
+                  state.logoPreviewUrl
+                    ? `<img src="${escapeHtml(state.logoPreviewUrl)}" alt="Brand logo preview" class="w-full h-full object-contain" />`
+                    : `<i data-lucide="cloud-upload" class="w-5 h-5 text-neutral-400"></i>`
+                }
+              </div>
+              <div class="min-w-0 flex-1 space-y-2">
+                <p class="text-[11px] text-neutral-600 truncate">
+                  ${escapeHtml(state.logoFile ? state.logoFile.name : 'Default brand logo')}
+                </p>
+                <label for="logo-upload-input" class="inline-flex h-9 px-3 items-center justify-center gap-1.5 rounded-lg bg-black text-white text-[11px] font-medium cursor-pointer hover:bg-neutral-800">
+                  <i data-lucide="cloud-upload" class="w-3.5 h-3.5"></i>
+                  Upload Logo
+                </label>
+                <input id="logo-upload-input" type="file" accept="image/*" class="hidden" />
+              </div>
+            </div>
+            <p class="text-[10px] leading-relaxed text-neutral-400">
+              The selected logo is used for image generation in this app session.
+            </p>
+          </div>
+
+          <div class="rounded-xl border border-neutral-200 p-4 space-y-3">
+            <div class="flex items-center gap-2">
+              <i data-lucide="sparkles" class="w-4 h-4 text-neutral-700"></i>
+              <div>
+                <h3 class="text-xs font-semibold text-black">AI Prompt Generator</h3>
+                <p class="text-[10px] text-neutral-500">
+                  Gemini membaca seluruh data make_prompt sebagai referensi.
+                </p>
+              </div>
+            </div>
+
+            <div class="space-y-1.5">
+              <label for="prompt-generator-product" class="block text-[11px] font-medium text-neutral-700">
+                Product
+              </label>
+              <input
+                id="prompt-generator-product"
+                type="text"
+                value="${escapeHtml(state.promptGeneratorProduct)}"
+                placeholder="Contoh: Apple Watch Series 11"
+                class="w-full h-10 rounded-lg border border-neutral-200 bg-white px-3 text-xs text-neutral-800 outline-none focus:border-neutral-500"
+              />
+            </div>
+
+            <div class="space-y-1.5">
+              <label for="prompt-generator-instructions" class="block text-[11px] font-medium text-neutral-700">
+                Additional Instructions <span class="font-normal text-neutral-400">(optional)</span>
+              </label>
+              <textarea
+                id="prompt-generator-instructions"
+                placeholder="Tambahkan arahan visual, headline, background, atau detail khusus..."
+                rows="3"
+                class="w-full resize-y rounded-lg border border-neutral-200 bg-white p-3 text-xs text-neutral-800 outline-none focus:border-neutral-500"
+              >${escapeHtml(state.promptGeneratorInstructions)}</textarea>
+            </div>
+
+            <button
+              id="btn-generate-prompt"
+              type="button"
+              data-action="generate-prompt"
+              ${state.isGeneratingPrompt || !state.promptGeneratorProduct.trim() ? 'disabled' : ''}
+              class="w-full h-10 rounded-lg bg-black text-white text-xs font-semibold inline-flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              <i data-lucide="${state.isGeneratingPrompt ? 'loader-2' : 'sparkles'}" class="w-3.5 h-3.5 ${state.isGeneratingPrompt ? 'animate-spin' : ''}"></i>
+              <span>${state.isGeneratingPrompt ? 'Analyzing References & Generating...' : 'Generate Prompt'}</span>
+            </button>
+
+            ${
+              state.promptGeneratorError
+                ? `<div class="rounded-lg border border-red-200 bg-red-50 p-3 text-[11px] text-red-700">${escapeHtml(state.promptGeneratorError)}</div>`
+                : ''
+            }
+
+            ${
+              state.generatedPrompt
+                ? `<div class="space-y-2 pt-1">
+                    <div class="flex items-center justify-between gap-2">
+                      <p class="text-[11px] font-semibold text-neutral-800">Generated Prompt</p>
+                      <span class="text-[10px] text-neutral-400">${state.promptReferenceCount} references analyzed</span>
+                    </div>
+                    <textarea readonly rows="12" class="w-full resize-y rounded-lg border border-neutral-200 bg-neutral-50 p-3 text-[11px] leading-relaxed text-neutral-800">${escapeHtml(state.generatedPrompt)}</textarea>
+                    <button type="button" data-action="copy-generated-prompt" class="w-full h-9 rounded-lg border border-neutral-200 bg-white text-xs font-semibold inline-flex items-center justify-center gap-2 hover:bg-neutral-50">
+                      <i data-lucide="${state.promptGeneratorCopied ? 'check' : 'copy'}" class="w-3.5 h-3.5 ${state.promptGeneratorCopied ? 'text-emerald-600' : ''}"></i>
+                      <span>${state.promptGeneratorCopied ? 'Copied' : 'Copy Prompt'}</span>
+                    </button>
+                  </div>`
+                : ''
+            }
+          </div>
+        </section>
+      `;
+    }
+
+    function renderTemplatesTab() {
+      const activePreviewSrc =
+        state.uploadedImageUrl ||
+        (state.generatedImageBase64 ? `data:${state.generatedImageMimeType};base64,${state.generatedImageBase64}` : null);
+
+      const showResultCard = Boolean(
+        activePreviewSrc ||
+        state.isGenerating ||
+        state.isUploading ||
+        state.isSavingUrl ||
+        state.generationError ||
+        state.uploadError ||
+        state.saveUrlError
+      );
+
+      if (!state.selectedRecordId) {
+        return `
+          <section class="flex-1 min-h-0 flex flex-col bg-white rounded-2xl border border-neutral-200 p-4 space-y-3 shadow-2xs">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <h2 class="text-sm font-semibold text-black">Select Product Template</h2>
+                <p class="text-[11px] text-neutral-500">Tap any template below to instantly generate its ad</p>
+                <p class="mt-1 text-[10px] text-neutral-400">${state.records.length} available</p>
+              </div>
+              <div class="flex items-center gap-2 shrink-0">
+                <button type="button" data-action="refresh-records" ${state.isLoadingRecords ? 'disabled' : ''} class="w-9 h-9 rounded-xl border border-neutral-200 bg-white flex items-center justify-center text-neutral-600 disabled:opacity-50" aria-label="Refresh templates">
+                  <i data-lucide="refresh-cw" class="w-4 h-4 ${state.isLoadingRecords ? 'animate-spin' : ''}"></i>
+                </button>
+              </div>
+            </div>
+
+            ${
+              state.isLoadingRecords
+                ? `<div class="space-y-2">
+                    ${[1, 2].map(() => `
+                      <div class="p-3.5 rounded-xl border border-neutral-200 bg-neutral-50 animate-pulse space-y-2">
+                        <div class="h-3.5 w-1/2 bg-neutral-200 rounded"></div>
+                        <div class="h-3 w-3/4 bg-neutral-200 rounded"></div>
+                      </div>
+                    `).join('')}
+                  </div>`
+                : state.recordsError
+                ? `<div class="p-3.5 rounded-xl bg-red-50 border border-red-200 space-y-2">
+                    <div class="flex items-start gap-2 text-xs text-red-900">
+                      <i data-lucide="alert-circle" class="w-4 h-4 text-red-600 shrink-0 mt-0.5"></i>
+                      <p>${escapeHtml(state.recordsError)}</p>
+                    </div>
+                    <button type="button" data-action="refresh-records" class="h-8 px-3 rounded-lg bg-black text-white text-xs font-medium inline-flex items-center gap-1.5">
+                      <i data-lucide="refresh-cw" class="w-3 h-3"></i>
+                      Retry
+                    </button>
+                  </div>`
+                : state.records.length === 0
+                ? `<div class="p-5 rounded-xl border border-neutral-200 bg-neutral-50 text-center space-y-1">
+                    <p class="text-xs font-semibold text-black">No Templates Found</p>
+                    <p class="text-[11px] text-neutral-500">The Supabase API returned 0 templates.</p>
+                  </div>`
+                : `<div class="flex-1 min-h-0 space-y-2 overflow-y-auto pr-0.5">
+                    ${state.records.map((rec) => {
+                      const isSelected = String(state.selectedRecordId) === String(rec.id);
+                      const productName = rec.product || rec.name || rec.id;
+                      const subtext = rec.subheadline || getRecordHeadlinePreview(rec) || rec.categories || '';
+                      const subtextStr = typeof subtext === 'string' ? subtext : JSON.stringify(subtext);
+
+                      return `
+                        <button type="button" data-action="select-record" data-id="${escapeHtml(rec.id)}" ${state.isGenerating || state.isUploading ? 'disabled' : ''} class="w-full text-left p-3.5 rounded-xl border transition flex items-center justify-between gap-3 ${
+                          isSelected ? 'bg-neutral-900 border-neutral-900 text-white' : 'bg-white border-neutral-200 hover:border-neutral-400 text-black'
+                        } disabled:opacity-60">
+                          <div class="min-w-0 flex-1 space-y-0.5">
+                            <p class="text-xs font-semibold truncate ${isSelected ? 'text-white' : 'text-black'}">${escapeHtml(productName)}</p>
+                            ${subtextStr ? `<p class="text-[11px] truncate ${isSelected ? 'text-neutral-300' : 'text-neutral-500'}">${escapeHtml(subtextStr)}</p>` : ''}
+                          </div>
+                          <div class="shrink-0">
+                            ${
+                              isSelected && (state.isGenerating || state.isUploading)
+                                ? `<i data-lucide="loader-2" class="w-4 h-4 animate-spin text-white"></i>`
+                                : `<i data-lucide="sparkles" class="w-4 h-4 ${isSelected ? 'text-white' : 'text-neutral-400'}"></i>`
+                            }
+                          </div>
+                        </button>
+                      `;
+                    }).join('')}
+                  </div>`
+            }
+          </section>
+        `;
+      }
+
+      if (!showResultCard) return '';
+
+      return `
+        <section class="bg-white rounded-2xl border border-neutral-200 p-4 space-y-3.5 shadow-2xs">
+          <div class="flex items-center justify-between">
+            <div>
+              <h2 class="text-sm font-semibold text-black">Generated Result</h2>
+              <p class="text-[11px] text-neutral-500">${escapeHtml(state.selectedRecord?.product || 'Instagram Ad (4:5)')}</p>
+            </div>
+            <div class="flex items-center gap-1.5">
+              ${
+                state.isImageUrlSaved && state.selectedRecord?.is_ready === true && !state.isSavingUrl
+                  ? `<button type="button" data-action="back-to-templates" class="h-8 px-3 rounded-lg border border-neutral-200 bg-white text-xs font-semibold text-black inline-flex items-center gap-1.5 hover:bg-neutral-50 transition">
+                      <i data-lucide="arrow-left" class="w-3.5 h-3.5"></i>
+                      <span>Back</span>
+                    </button>`
+                  : ''
+              }
+              ${
+                state.isGenerating
+                  ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-medium bg-neutral-100 text-neutral-800 inline-flex items-center gap-1">
+                      <i data-lucide="loader-2" class="w-3 h-3 animate-spin"></i>Generating
+                    </span>`
+                  : ''
+              }
+              ${
+                state.isUploading
+                  ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-medium bg-neutral-100 text-neutral-800 inline-flex items-center gap-1">
+                      <i data-lucide="loader-2" class="w-3 h-3 animate-spin"></i>Uploading
+                    </span>`
+                  : ''
+              }
+              ${
+                state.isSavingUrl
+                  ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-medium bg-neutral-100 text-neutral-700 inline-flex items-center gap-1">
+                      <i data-lucide="loader-2" class="w-3 h-3 animate-spin"></i>Saving URL
+                    </span>`
+                  : ''
+              }
+              ${
+                state.isImageUrlSaved && !state.isSavingUrl
+                  ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">Saved to make_prompt</span>`
+                  : ''
+              }
+              ${
+                state.uploadedImageUrl && !state.isSavingUrl && !state.isImageUrlSaved && !state.saveUrlError
+                  ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-medium bg-neutral-100 text-neutral-700 border border-neutral-200">Uploaded</span>`
+                  : ''
+              }
+            </div>
+          </div>
+
+          ${
+            state.generationError
+              ? `<div class="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-900 space-y-2">
+                  <p class="font-semibold">Generation Failed</p>
+                  <p class="text-red-700">${escapeHtml(state.generationError)}</p>
+                  <button type="button" data-action="retry-generation" class="h-8 px-3 rounded-lg bg-black text-white text-xs font-medium">Retry Generation</button>
+                </div>`
+              : ''
+          }
+
+          ${
+            state.uploadError
+              ? `<div class="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-900 space-y-2">
+                  <p class="font-semibold">Image Upload Failed</p>
+                  <p class="text-red-700">${escapeHtml(state.uploadError)}</p>
+                  <button type="button" data-action="retry-upload" ${!state.generatedImageBase64 || state.isUploading ? 'disabled' : ''} class="h-8 px-3 rounded-lg bg-black text-white text-xs font-medium disabled:opacity-50">Retry Upload</button>
+                </div>`
+              : ''
+          }
+
+          ${
+            state.saveUrlError
+              ? `<div class="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-900 space-y-2">
+                  <p class="font-semibold">Database URL Save Failed</p>
+                  <p class="text-red-700">${escapeHtml(state.saveUrlError)}</p>
+                  <button type="button" data-action="retry-save-url" ${!state.selectedRecord?.id || !state.uploadedImageUrl || state.isSavingUrl ? 'disabled' : ''} class="h-8 px-3 rounded-lg bg-black text-white text-xs font-medium disabled:opacity-50">Retry Save URL</button>
+                </div>`
+              : ''
+          }
+
+          ${
+            activePreviewSrc
+              ? `<div class="relative w-full aspect-[4/5] rounded-2xl overflow-hidden bg-neutral-100 border border-neutral-200">
+                  <img src="${escapeHtml(activePreviewSrc)}" alt="Advertisement Preview" class="w-full h-full object-cover" />
+                  <button type="button" data-action="open-full-view" class="absolute bottom-3 right-3 h-9 px-3 rounded-xl bg-white/95 backdrop-blur-xs border border-neutral-200 text-black text-xs font-medium inline-flex items-center gap-1.5 shadow-xs hover:bg-white transition">
+                    <i data-lucide="maximize-2" class="w-3.5 h-3.5"></i>
+                    <span>View Full</span>
+                  </button>
+                </div>`
+              : ''
+          }
+
+          ${
+            state.uploadedImageUrl
+              ? `<div class="p-3 rounded-xl bg-neutral-50 border border-neutral-200 space-y-2">
+                  <div class="flex items-center justify-between">
+                    <span class="text-[11px] font-semibold text-neutral-700">Public URL</span>
+                    <a href="${escapeHtml(state.uploadedImageUrl)}" target="_blank" rel="noopener noreferrer" class="text-[11px] font-medium text-black inline-flex items-center gap-1 hover:underline">
+                      <span>Open</span>
+                      <i data-lucide="external-link" class="w-3 h-3"></i>
+                    </a>
+                  </div>
+                  <div class="p-2 rounded-lg bg-white border border-neutral-200 font-mono text-[11px] text-neutral-700 break-all">${escapeHtml(state.uploadedImageUrl)}</div>
+                  <button type="button" data-action="copy-image-url" class="w-full h-9 rounded-xl bg-black text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 hover:bg-neutral-800 transition">
+                    ${
+                      state.copiedImageUrl
+                        ? `<i data-lucide="check" class="w-3.5 h-3.5 text-emerald-400"></i><span>URL Copied</span>`
+                        : `<i data-lucide="copy" class="w-3.5 h-3.5"></i><span>Copy Public Image URL</span>`
+                    }
+                  </button>
+                </div>`
+              : ''
+          }
+
+          <div class="grid grid-cols-2 gap-2 pt-1">
+            <button type="button" data-action="retry-generation" ${state.isGenerating || !state.selectedRecord ? 'disabled' : ''} class="h-10 rounded-xl border border-neutral-200 bg-white hover:bg-neutral-50 text-black text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition disabled:opacity-50">
+              <i data-lucide="refresh-cw" class="w-3.5 h-3.5 ${state.isGenerating ? 'animate-spin' : ''}"></i>
+              <span>Regenerate</span>
+            </button>
+            <button type="button" data-action="download-image" ${!state.generatedImageBase64 ? 'disabled' : ''} class="h-10 rounded-xl border border-neutral-200 bg-white hover:bg-neutral-50 text-black text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition disabled:opacity-50">
+              <i data-lucide="download" class="w-3.5 h-3.5"></i>
+              <span>Download</span>
+            </button>
+          </div>
+        </section>
+      `;
+    }
+
+    function renderScheduleModal() {
+      const selectedHistoryRecord = state.historyRecords.find((r) => String(r.id) === String(state.selectedHistoryId)) || null;
+      if (state.activeTab !== 'history' || !selectedHistoryRecord || state.scheduleRecordId !== selectedHistoryRecord.id) {
+        return '';
+      }
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kuala_Lumpur' }).format(new Date());
+      const canConfirm = Boolean(!state.isScheduling && !state.isLoadingScheduleSlots && state.selectedScheduleSlot && selectedHistoryRecord.image_url && selectedHistoryRecord.caption);
+
+      return `
+        <div id="schedule-modal-backdrop" class="fixed inset-0 z-40 flex items-end justify-center bg-black/40">
+          <section role="dialog" aria-modal="true" aria-label="Jadwalkan Post" class="w-full max-w-[500px] max-h-[85%] overflow-y-auto rounded-t-3xl bg-white shadow-2xl animate-slide-up">
+            <div class="sticky top-0 z-10 bg-white rounded-t-3xl px-4 pt-3 pb-3 border-b border-neutral-100">
+              <div class="w-10 h-1 rounded-full bg-neutral-300 mx-auto mb-3"></div>
+              <div class="flex items-center justify-between">
+                <div>
+                  <h3 class="text-sm font-semibold text-black">Jadwalkan Post</h3>
+                  <p class="text-[11px] text-neutral-500">Pilih tanggal dan waktu publikasi (MYT)</p>
+                </div>
+                <button type="button" data-action="close-schedule-modal" ${state.isScheduling ? 'disabled' : ''} class="w-8 h-8 rounded-full bg-neutral-100 text-neutral-600 inline-flex items-center justify-center disabled:opacity-50" aria-label="Tutup">
+                  <i data-lucide="x" class="w-4 h-4"></i>
+                </button>
+              </div>
+            </div>
+            <div class="p-4 space-y-4">
+              <div class="space-y-2">
+                <label class="block text-xs font-semibold text-neutral-700">Tanggal publikasi</label>
+                <input
+                  id="schedule-date-input"
+                  type="date"
+                  value="${escapeHtml(state.scheduleDate)}"
+                  min="${escapeHtml(today)}"
+                  ${state.isScheduling ? 'disabled' : ''}
+                  class="w-full h-11 rounded-xl border border-neutral-200 bg-white px-3 text-sm text-neutral-800"
+                />
+              </div>
+              <div class="space-y-2">
+                <p class="text-xs font-semibold text-neutral-700">Pilih slot waktu</p>
+                ${
+                  state.isLoadingScheduleSlots
+                    ? `<div class="flex items-center gap-2 py-3 text-xs text-neutral-500"><i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Memeriksa ketersediaan jadwal...</div>`
+                    : `<div class="grid grid-cols-3 gap-2">
+                        ${CALENDAR_SLOTS.map((slot) => {
+                          const isAvailable = state.availableScheduleSlots.includes(slot);
+                          const isSelected = state.selectedScheduleSlot === slot;
+                          const btnClass = !isAvailable
+                            ? 'py-3 rounded-xl border text-xs font-semibold bg-neutral-100 border-neutral-100 text-neutral-300 line-through'
+                            : isSelected
+                            ? 'py-3 rounded-xl border text-xs font-semibold bg-black border-black text-white'
+                            : 'py-3 rounded-xl border text-xs font-semibold bg-white border-neutral-200 text-neutral-700';
+                          return `
+                            <button type="button" data-action="select-schedule-slot" data-slot="${escapeHtml(slot)}" ${!isAvailable || state.isScheduling ? 'disabled' : ''} class="${btnClass} disabled:cursor-not-allowed">
+                              ${escapeHtml(slot)}${!isAvailable ? ' · Penuh' : ''}
+                            </button>
+                          `;
+                        }).join('')}
+                      </div>`
+                }
+                ${
+                  !state.isLoadingScheduleSlots && state.availableScheduleSlots.length === 0
+                    ? `<p class="text-xs text-amber-700 bg-amber-50 rounded-xl p-3">Semua slot pada tanggal ini sudah terisi.</p>`
+                    : ''
+                }
+              </div>
+            </div>
+            <div class="sticky bottom-0 border-t border-neutral-200 bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))] flex gap-2">
+              <button type="button" data-action="close-schedule-modal" ${state.isScheduling ? 'disabled' : ''} class="h-12 px-5 rounded-xl border border-neutral-200 bg-white text-xs font-medium text-neutral-600 disabled:opacity-50">Batal</button>
+              <button type="button" data-action="confirm-schedule" ${!canConfirm ? 'disabled' : ''} class="flex-1 h-12 rounded-xl bg-black text-white text-xs font-semibold disabled:opacity-50 inline-flex items-center justify-center gap-2">
+                ${state.isScheduling ? `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i>` : ''}
+                <span>${state.isScheduling ? 'Menjadwalkan...' : 'Konfirmasi Jadwal'}</span>
+              </button>
+            </div>
+          </section>
+        </div>
+      `;
+    }
+
+    function renderFullViewModal() {
+      const activePreviewSrc =
+        state.uploadedImageUrl ||
+        (state.generatedImageBase64 ? `data:${state.generatedImageMimeType};base64,${state.generatedImageBase64}` : null);
+
+      if (!state.isFullViewOpen || !activePreviewSrc) return '';
+
+      return `
+        <div class="fixed inset-0 z-50 bg-black/90 flex flex-col justify-between p-4">
+          <div class="flex items-center justify-between text-white">
+            <p class="text-sm font-semibold truncate">${escapeHtml(state.selectedRecord?.product || 'Advertisement Preview')}</p>
+            <button type="button" data-action="close-full-view" class="w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center text-white" aria-label="Close modal">
+              <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
+          </div>
+          <div class="flex-1 flex items-center justify-center my-4 overflow-hidden">
+            <img src="${escapeHtml(activePreviewSrc)}" alt="Full Advertisement" class="max-h-full max-w-full rounded-xl object-contain" />
+          </div>
+          <div class="flex gap-2">
+            ${
+              state.uploadedImageUrl
+                ? `<button type="button" data-action="copy-image-url" class="flex-1 h-11 rounded-xl bg-white text-black text-xs font-semibold flex items-center justify-center gap-1.5">
+                    <i data-lucide="copy" class="w-4 h-4"></i>
+                    <span>Copy URL</span>
+                  </button>`
+                : ''
+            }
+            <button type="button" data-action="download-image" class="flex-1 h-11 rounded-xl bg-neutral-800 text-white border border-neutral-700 text-xs font-semibold flex items-center justify-center gap-1.5">
+              <i data-lucide="download" class="w-4 h-4"></i>
+              <span>Download</span>
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
+    function render() {
+      const appEl = document.getElementById('app');
+      if (!appEl) return;
+
+      const selectedHistoryRecord = state.historyRecords.find((r) => String(r.id) === String(state.selectedHistoryId)) || null;
+      const selectedCalendarRecord = state.calendarRecords.find((r) => String(r.id) === String(state.selectedCalendarRecordId)) || null;
+
+      const isScrollableMain =
+        state.activeTab === 'history' ||
+        state.activeTab === 'calendar' ||
+        Boolean(state.selectedRecordId);
+
+      let mainContent = '';
+      if (state.activeTab === 'history') mainContent = renderHistoryTab();
+      else if (state.activeTab === 'calendar') mainContent = renderCalendarTab();
+      else if (state.activeTab === 'settings') mainContent = renderSettingsTab();
+      else mainContent = renderTemplatesTab();
+
+      const hideBottomNav = Boolean(selectedHistoryRecord || selectedCalendarRecord);
+
+      appEl.innerHTML = `
+        <div class="w-full max-w-[500px] h-[100dvh] bg-white flex flex-col border-x border-neutral-200 overflow-hidden relative">
+          ${renderToast()}
+          <main class="flex-1 min-h-0 overflow-x-hidden bg-[#F5F5F7] p-0 flex flex-col ${isScrollableMain ? 'overflow-y-auto' : 'overflow-hidden'}">
+            ${mainContent}
+          </main>
+          ${renderScheduleModal()}
+          ${
+            !hideBottomNav
+              ? `<nav class="shrink-0 h-16 border-t border-neutral-200 bg-white px-2 flex items-center justify-around z-20" aria-label="Main navigation">
+                  <button type="button" data-action="nav-templates" class="min-w-0 flex-1 h-full flex flex-col items-center justify-center gap-1 text-[10px] font-medium transition ${state.activeTab === 'templates' ? 'text-black' : 'text-neutral-400 hover:text-neutral-700'}">
+                    <i data-lucide="layout-grid" class="w-5 h-5"></i>
+                    <span>Template</span>
+                  </button>
+                  <button type="button" data-action="nav-history" ${state.isLoadingHistory ? 'disabled' : ''} class="min-w-0 flex-1 h-full flex flex-col items-center justify-center gap-1 text-[10px] font-medium transition disabled:opacity-50 ${state.activeTab === 'history' ? 'text-black' : 'text-neutral-400 hover:text-neutral-700'}">
+                    <i data-lucide="history" class="w-5 h-5"></i>
+                    <span>Jadwal</span>
+                  </button>
+                  <button type="button" data-action="nav-calendar" ${state.isLoadingCalendar ? 'disabled' : ''} class="min-w-0 flex-1 h-full flex flex-col items-center justify-center gap-1 text-[10px] font-medium transition disabled:opacity-50 ${state.activeTab === 'calendar' ? 'text-black' : 'text-neutral-400 hover:text-neutral-700'}">
+                    <i data-lucide="calendar-days" class="w-5 h-5"></i>
+                    <span>Calendar</span>
+                  </button>
+                  <button type="button" data-action="nav-settings" class="min-w-0 flex-1 h-full flex flex-col items-center justify-center gap-1 text-[10px] font-medium transition ${state.activeTab === 'settings' ? 'text-black' : 'text-neutral-400 hover:text-neutral-700'}">
+                    <i data-lucide="settings" class="w-5 h-5"></i>
+                    <span>Settings</span>
+                  </button>
+                </nav>`
+              : ''
+          }
+          ${renderFullViewModal()}
+        </div>
+      `;
+
+      // Inisialisasi ulang ikon Lucide setelah DOM diperbarui
+      if (window.lucide) {
+        window.lucide.createIcons();
+      }
+
+      bindDynamicInputs();
+    }
+
+    // =========================================================================
+    // EVENT LISTENERS (DELEGATION & INPUT BINDING)
+    // =========================================================================
+    function bindDynamicInputs() {
+      const logoInput = document.getElementById('logo-upload-input');
+      if (logoInput) {
+        logoInput.onchange = (e) => {
+          const file = e.target.files?.[0];
+          if (file) {
+            state.logoFile = file;
+            state.logoPreviewUrl = URL.createObjectURL(file);
+            showToast('success', 'Brand logo attached successfully.');
+          }
+        };
+      }
+
+      const prodInput = document.getElementById('prompt-generator-product');
+      if (prodInput) {
+        prodInput.oninput = (e) => {
+          state.promptGeneratorProduct = e.target.value;
+          const btn = document.getElementById('btn-generate-prompt');
+          if (btn) {
+            btn.disabled = state.isGeneratingPrompt || !state.promptGeneratorProduct.trim();
+          }
+        };
+      }
+
+      const instrInput = document.getElementById('prompt-generator-instructions');
+      if (instrInput) {
+        instrInput.oninput = (e) => {
+          state.promptGeneratorInstructions = e.target.value;
+        };
+      }
+
+      const scheduleDateInput = document.getElementById('schedule-date-input');
+      if (scheduleDateInput) {
+        scheduleDateInput.onchange = (e) => {
+          const nextDate = e.target.value;
+          state.scheduleDate = nextDate;
+          loadScheduleAvailability(nextDate);
+        };
+      }
+
+      const modalBackdrop = document.getElementById('schedule-modal-backdrop');
+      if (modalBackdrop) {
+        modalBackdrop.onclick = (e) => {
+          if (e.target === modalBackdrop && !state.isScheduling) {
+            state.scheduleRecordId = null;
+            state.selectedScheduleSlot = '';
+            render();
+          }
+        };
+      }
+    }
+
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-action]');
+      if (!btn) return;
+
+      const action = btn.getAttribute('data-action');
+      const id = btn.getAttribute('data-id');
+      const slot = btn.getAttribute('data-slot');
+
+      switch (action) {
+        case 'nav-templates':
+          state.activeTab = 'templates';
+          state.selectedCalendarRecordId = null;
+          state.selectedHistoryId = null;
+          state.selectedRecordId = null;
+          state.selectedRecord = null;
+          render();
+          break;
+
+        case 'nav-history':
+          state.activeTab = 'history';
+          state.selectedCalendarRecordId = null;
+          loadHistory();
+          break;
+
+        case 'nav-calendar':
+          state.activeTab = 'calendar';
+          state.selectedCalendarRecordId = null;
+          loadCalendar();
+          break;
+
+        case 'nav-settings':
+          state.activeTab = 'settings';
+          state.selectedCalendarRecordId = null;
+          render();
+          break;
+
+        case 'refresh-records':
+          loadRecords();
+          break;
+
+        case 'select-record':
+          handleSelectRecord(id);
+          break;
+
+        case 'back-to-templates':
+          handleBackToTemplates();
+          break;
+
+        case 'retry-generation':
+          if (state.selectedRecord) {
+            executeGeneration(state.variables, state.selectedRecord.id);
+          }
+          break;
+
+        case 'retry-upload':
+          if (state.generatedImageBase64 && !state.isUploading) {
+            uploadGeneratedImageToEdge(state.generatedImageBase64, state.generatedImageMimeType, state.selectedRecord?.id);
+          }
+          break;
+
+        case 'retry-save-url':
+          if (state.selectedRecord?.id && state.uploadedImageUrl && !state.isSavingUrl) {
+            saveImageUrlToPromptRecord(state.selectedRecord.id, state.uploadedImageUrl);
+          }
+          break;
+
+        case 'copy-image-url':
+          if (state.uploadedImageUrl) {
+            if (copyTextToClipboard(state.uploadedImageUrl)) {
+              state.copiedImageUrl = true;
+              showToast('success', 'Public image URL copied.');
+              setTimeout(() => {
+                state.copiedImageUrl = false;
+                render();
+              }, 2000);
+            } else {
+              showToast('error', 'Unable to copy image URL.');
+            }
+          }
+          break;
+
+        case 'download-image':
+          handleDownloadImage();
+          break;
+
+        case 'open-full-view':
+          state.isFullViewOpen = true;
+          render();
+          break;
+
+        case 'close-full-view':
+          state.isFullViewOpen = false;
+          render();
+          break;
+
+        case 'refresh-history':
+          loadHistory();
+          break;
+
+        case 'select-history':
+          state.selectedHistoryId = id;
+          render();
+          break;
+
+        case 'close-history-detail':
+          state.selectedHistoryId = null;
+          state.scheduleRecordId = null;
+          render();
+          break;
+
+        case 'open-schedule-modal': {
+          const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kuala_Lumpur' }).format(new Date());
+          state.scheduleDate = today;
+          state.selectedScheduleSlot = '';
+          state.scheduleRecordId = id;
+          loadScheduleAvailability(today);
+          break;
+        }
+
+        case 'close-schedule-modal':
+          if (!state.isScheduling) {
+            state.scheduleRecordId = null;
+            state.selectedScheduleSlot = '';
+            render();
+          }
+          break;
+
+        case 'select-schedule-slot':
+          state.selectedScheduleSlot = slot;
+          render();
+          break;
+
+        case 'confirm-schedule': {
+          const rec = state.historyRecords.find((r) => String(r.id) === String(state.selectedHistoryId));
+          if (rec) handleScheduleRecord(rec);
+          break;
+        }
+
+        case 'refresh-calendar':
+          loadCalendar();
+          break;
+
+        case 'select-calendar':
+          state.selectedCalendarRecordId = id;
+          render();
+          break;
+
+        case 'close-calendar-detail':
+          state.selectedCalendarRecordId = null;
+          render();
+          break;
+
+        case 'copy-calendar-caption': {
+          const calRec = state.calendarRecords.find((r) => String(r.id) === String(state.selectedCalendarRecordId));
+          const caption = serializeFieldForEditor(calRec?.caption);
+          if (caption) {
+            const copied = copyTextToClipboard(caption);
+            showToast(copied ? 'success' : 'error', copied ? 'Caption berhasil disalin.' : 'Tidak dapat menyalin caption.');
+          }
+          break;
+        }
+
+        case 'generate-prompt':
+          handleGeneratePrompt();
+          break;
+
+        case 'copy-generated-prompt':
+          if (state.generatedPrompt) {
+            if (copyTextToClipboard(state.generatedPrompt)) {
+              state.promptGeneratorCopied = true;
+              showToast('success', 'Generated prompt berhasil disalin.');
+              setTimeout(() => {
+                state.promptGeneratorCopied = false;
+                render();
+              }, 2000);
+            } else {
+              showToast('error', 'Tidak dapat menyalin prompt.');
+            }
+          }
+          break;
+      }
+    });
+
+    // Inisialisasi aplikasi saat halaman selesai dimuat
+    window.addEventListener('DOMContentLoaded', () => {
+      render();
+      loadRecords();
+    });
+  </script>
+</body>
+</html>
